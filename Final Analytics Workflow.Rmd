@@ -1,0 +1,326 @@
+---
+title: "Predicting the Fair Value of a Property in Ames Iowa"
+author: Andrey Golubev
+date: October 2, 2020
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: "hide"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+ 
+```
+
+
+## 1.0 Project Purpose and Introduction
+
+In this project, I make an attempt to develop a model that aims to help real state developers located in the city of Ames estimate the value of a proprety, which is to be developed in the future. The model, which can be located below, can help real estate developers focus their attention on those modifications that the model found to have a significant effect on predicting the sale price of a property in the city of Ames. 
+
+The model can be used to predict:
+
+- at the planning stage:
+    - by providing a fair value estimate of a price of a particular property
+- at the execution and post-execution stages:
+    - by predicting a fair value of a property with certain characteristics
+ 
+The model will not be able to predict a potential value of improvements, however, it can be used as a basis of comparison between sale price of a property in two points in time: when a property is acquired for modifications (to be able to estimate its fair sale price and ensure that no overpayment occurs), and when a property is listed for sale (to be able to estimate a fair selling price based on the market data) once modifications have been carried out.
+ 
+
+The original data, which was used to build the model, has been obtained from the Ames Assessor’s Office and has been typically used for tax assessment purposes. However, it was found to be applicable for predicting the value of a property. The data set can be found by accessing [this link](https://miamioh.instructure.com/courses/129804/files/16457352/download?wrap=1). By accessing the link above, a zip compressed folder will be downloaded, which will include the original data file that was used to build the model. In addition to the data file, the folder also includes the text file that outlines the descriptions of the variables that are included in the original data set. 
+
+## 2.0 Loading Data
+
+As the first step of performing the analysis, all of the necessary packages, as well as the data was loaded.
+
+
+```{r}
+library(pacman) 
+# Loading the required packages
+p_load(knitr, DataExplorer, dplyr, tidyverse, MASS, corrplot, papeR)
+
+# Reading in the required data and the data frame
+data = read.csv('AmesHousing.csv')
+data_working = data
+```
+
+
+## 3.0 Data Description
+
+As can be seen by the table below, the original data file includes 2,930 observations with 82 different columns. In addition, the number of discret variables in the model is 43, and the number of continuous variables is 39. 
+
+
+```{r}
+# The short description of the data obtained from DataExplorer package in R
+descr=introduce(data)
+ 
+# The variables names are renamed to improve understanding
+descr$Number_of_rows = descr$rows  
+descr$Number_of_columns = descr$columns
+descr$Discrete = descr$discrete_columns
+descr$Continuous = descr$continuous_columns
+descr$Number_of_missing_values = descr$total_missing_values
+
+# The redundant columns are removed from the dataframe
+descr=dplyr::select(descr, -all_missing_columns, -complete_rows, -memory_usage, -rows, -columns, -discrete_columns,
+                    -continuous_columns, -total_missing_values, -total_observations)
+
+# The kable function helps to properly format the dataframe
+kable(descr)
+
+```
+
+
+### 3.1 Exploration of Missing Variables
+However, at the beginning of the analysis, as can be seen by the table above, it was noted that the original data set included a large number of missing values, in patricular 13,960. In order to properly build the regression model, which is the focus of this analysis, it was important to explore which variables had a high number of missing observations, as the model cannot be built when they are included in the data. 
+
+Using the code included below, it can be seen that a total of five variables had an unusually high percentage of observations that contained in the missing data (over 48%). The bar plot was created using the DataExplorer package for the purpose of visualizing the *missingness* of the data. Those columns were removed from the original data set and were not used for the purposes of this analysis. The rest of the variables that had a smaller percentage of missing variables were either imputed or removed from the data set, as described in the later sections of this paper.
+
+```{r}
+# Dataframe that contains the variable name and the number of missing values is created 
+missing_variables=as.data.frame(sapply(data_working, function(x) sum(is.na(x))))
+missing_variables=rownames_to_column(missing_variables, var = "Variable")
+colnames(missing_variables) <- c("Variable", "Missing")
+
+# Index searches for variable names that have any missing values
+index=which(missing_variables$Missing >0)
+# The names of the variables are extracted into a character vector
+missing_variables=missing_variables[index,]
+missing_column_names=missing_variables[,1]
+
+# The data is filtered to include only missing variables
+data_working_missing<-dplyr::select(data_working, missing_column_names)
+ 
+# Function from DataExplorer package. It plot the percentage of values that are missing
+plot_missing(data_working_missing)
+
+# Variables are removed from the data set
+data_working_missing<-dplyr::select(data_working, -Fireplace.Qu, -Fence, -Alley, -Misc.Feature, -Pool.QC)
+```
+
+## 4.1 Data Preprocessing
+
+In order to build a regression model, the data has gone through several preprosessing steps, described below. The main focus of this stage in the analysis was to find a way to deal with missing variables that could not be included in the model building process. In addition, due to a high number of total variables in the original data set, it was necessary to determine whether any of the variables were correlated to each other. Highly correlated variables were not included in the final model, as they may increase the model's total degrees of freedom without improving its accuracy. In addition, categorical factor variables that included a high number of different levels were also collapsed, as shown below, as they may also increase the complexity of the model (the total number of dimensions).
+
+
+### 4.2 Removing Highly Correlated Numeric Variables
+
+As the first step of data preprossesing, the following correlation matrix of numeric variables was built. The primary goal of the matrix was to discover numeric variables that had a high correlation values, as described by the color of the related boxes in the matrix. Variables that showed a high correlation (colored blue) were removed from the data set and were not used for the analysis. 
+
+Prior to building the correlation matrix, several variables were converted into type *factor*. This was done to minimize the complexity of the graph and also remove variables that do not provide any particular value to the analysis because they serve as indicators in this data.
+
+```{r}
+# Variable are recoded from integer type to factor type
+data_working$Order = as.factor(data_working$Order)
+data_working$PID = as.factor(data_working$PID)
+data_working$Mo.Sold = as.factor(data_working$Mo.Sold)
+data_working$Yr.Sold = as.factor(data_working$Yr.Sold)
+data_working$Year.Built = as.factor(data_working$Year.Built)
+data_working$Year.Remod.Add = as.factor(data_working$Year.Remod.Add)
+data_working$Garage.Yr.Blt = as.factor(data_working$Garage.Yr.Blt)
+```
+
+```{r}
+# Vector with the names of the numeric variables is created
+nums<-unlist(lapply(data_working, is.numeric))
+
+# Correlation table and correlation matrix are created
+M<-cor(data_working[,nums], use="complete.obs")
+corrplot(M, method="color", type="upper")
+```
+
+The correlation plot showed that there were two variables, which had a high correlation between each other. First of all, it can be seen that the variable Garage.Cars was highly correlated with Garage.Area variable. This is to be expected, as the number of cars that can be 'stored' in the garage is likely to be represented in the total area of a garage. In other words, as the area of any garage increases, the total number of cars that a garage can store is likely to increase, as well. For this reason, it was determined that the garage area is likely to be more important for the purposes of this analysis, and Garage.Cars variable was therefore removed, as can be seen by the code below.
+
+In addition, it is clear that X1st.Flr.SF is strongly correlated to Total.Bsmt.SF. Those first variable represents the area of the first floor, as measured in square feet, while the second variable represent the total area of a property's basement. As it appears that two variables are highly correlated, they were removed from the data set. 
+
+```{r}
+# Variables that have high correlation are removed from the dataset
+data_working<-dplyr::select(data_working, -Garage.Cars, -X1st.Flr.SF)
+```
+
+
+### 4.3 Imputing Numeric Variables
+
+In order to determine which variables have to be imputed, a new data set is created that contains only the numeric variables from the original data set. Then, using a function, that data set is filtered and only the variables that have any missing values are included.
+
+```{r}
+# Vector with the names of the numeric variables is created
+nums<-unlist(lapply(data_working, is.numeric))
+data_working1= data_working[,nums]
+
+# Dataframe that contains the variable name and the number of missing values is created 
+missing_variables=as.data.frame(sapply(data_working1, function(x) sum(is.na(x))))
+missing_variables=rownames_to_column(missing_variables, var = "Variable")
+colnames(missing_variables) <- c("Variable", "Missing")
+
+# Index searches for variable names that have any missing values
+index=which(missing_variables$Missing >0)
+# The names of the variables are extracted into a character vector
+missing_variables=missing_variables[index,]
+missing_column_names=missing_variables[,1]
+
+data_working1<-dplyr::select(data_working1, missing_column_names)
+
+```
+
+
+Once the data set is generated, the following histograms were created to explore the distribution of these variables. 
+
+```{r}
+# Histograms of the numeric variables are created
+plot_histogram(data_working1)
+```
+
+There are a couple of different ways that imputation of the numeric ways can be performed. As described in [the Journal Analytics Vidhya](https://medium.com/analytics-vidhya/feature-engineering-part-1-mean-median-imputation-761043b95379), it is necessary to look at the distribution of the numeric variables and take note whether the data is skewed, or if it is normally distributed. In cases when the data is skewed, as described in the article above, the missing observations should be replaced with the median value of that variable. However, when the data is normally distributed, it is necessary to use the mean. 
+
+As can be seen by the histograms, all of the variables are skewed, and are therefore imputed using median in the code below. 
+
+```{r}
+nums<-unlist(lapply(data_working, is.numeric))
+data_working1= data_working[,nums]
+
+
+# Imputation of the numeric variables around their median
+data_working1$Total.Bsmt.SF[is.na(data_working1$Total.Bsmt.SF)]<-median(data_working1$Total.Bsmt.SF, na.rm=TRUE)
+data_working1$Mas.Vnr.Area[is.na(data_working1$Mas.Vnr.Area)]<-median(data_working1$Mas.Vnr.Area, na.rm=TRUE)
+data_working1$Lot.Frontage[is.na(data_working1$Lot.Frontage)]<-median(data_working1$Lot.Frontage, na.rm=TRUE)
+data_working1$Garage.Area[is.na(data_working1$Garage.Area)]<-median(data_working1$Garage.Area, na.rm=TRUE)
+data_working1$BsmtFin.SF.1[is.na(data_working1$BsmtFin.SF.1)]<-median(data_working1$BsmtFin.SF.1, na.rm=TRUE)
+data_working1$BsmtFin.SF.2[is.na(data_working1$BsmtFin.SF.2)]<-median(data_working1$BsmtFin.SF.2, na.rm=TRUE)
+data_working1$Bsmt.Unf.SF[is.na(data_working1$Bsmt.Unf.SF)]<-median(data_working1$Bsmt.Unf.SF, na.rm=TRUE)
+data_working1$Bsmt.Half.Bath[is.na(data_working1$Bsmt.Half.Bath)]<-median(data_working1$Bsmt.Half.Bath, na.rm=TRUE)
+data_working1$Bsmt.Full.Bath[is.na(data_working1$Bsmt.Full.Bath)]<-median(data_working1$Bsmt.Full.Bath, na.rm=TRUE)
+```
+
+
+### 4.4 Numeric Variable Selection Using Stepwise Regression 
+
+At this point of the analysis, the data set includes numeric variables that have no missing values, and have gone through a proper process of imputation. In order to determine which numeric variables are going to be included in our analysis, it is important to perform variable selection to determine the ones that are significant for predicting the sale price of a particular property. 
+
+For my variable selection, the variables are going to be determined using the stepwise variable selection model using AIC as the metric for selection. 
+
+```{r}
+# Full regression model using all predictors is created
+full.model <- lm(SalePrice ~., data = data_working1)
+
+# Stepwise variables selection regression model is created
+step.model <- stepAIC(full.model, direction = "both", 
+                      trace = FALSE)
+```
+
+The stepwise regression model determined that there is a total of 23 variables that are significant for predicting a sale price of a particular property. The following summary was produced to highlight the variables names, along with their p-values and estimates.
+
+```{r}
+# Summary of the model is printed to show the variable names
+s=summary(step.model)
+s$call$formula
+```
+
+The variable names are then recorded to the model matrix, and the variable names are extracted into a separate character vector. The data set is then filtered to include only those variable names, that were determined by the model to be significant for our prediction task.
+
+In addition, 4 other categorical variables have been manually included to the model.
+
+```{r}
+# Model matric is created
+x=model.matrix(step.model)
+
+# Variable names are extracted and SalePrice is included instead of the intercept
+variables=colnames(x)
+variables[1] = "SalePrice"
+```
+
+```{r}
+# The variables determined by the model are included to the dataset with additional 3 cat. variables
+data_working1 = dplyr::select(data_working, variables, Neighborhood, Year.Built, Yr.Sold)
+```
+
+In addition, the year variables are converted back to the integer type.
+
+```{r}
+# Converting variables to integer type
+data_working1$Year.Built = as.integer(data_working1$Year.Built)
+data_working1$Yr.Sold = as.integer(data_working1$Yr.Sold)
+ 
+```
+
+
+### 4.5 Collapsing categories of Neighborhood Variable
+
+In addition, it is also important to check that none of the categorical variables that are included in the model have a large number of categories (factor levels). This is done to ensure that the model is not complex in terms of total degrees of freedom, and that the model does not have a large number of dimensions.
+
+Based on the output below, we can see that one categorical variable "Neighborhood" has a total of 28 levels, meaning that the data captures properties located in 28 different neighborhoods. Building a model that captures the data on all neighborhoods would be difficult to interpret and use for our prediction task. For this reason, the following bar chart is created to be able to see those neighborhoods that appear most often in our data set. 
+
+```{r}
+# Creating a bar plot
+plot_bar(data_working1$Neighborhood)
+```
+
+Once the most common neighborhoods have been identified, five of them have been selected based on the number of their occurence in the data set, and five separate dummy variables representing each of the neighborhoods were created and were included into the data set. The dummy variables capture the information on the fact whether a property is located in that neighborhood. If that is the case, that variable will show *'1'* for that property, and *'0'* if the property is located in any other neighborhood. The original *'Neighborhood'* variable is removed from the model. 
+
+```{r}
+ # Model matrix is created
+dum<-model.matrix(~0+Neighborhood, data=data_working1)
+dum<-as.data.frame(dum)
+
+# Dummy variables for 5 most common neighborhood are created
+data_working1$Neighborhood_NAmes<-as.factor(dum$NeighborhoodNAmes)
+data_working1$Neighborhood_CollgCr<-as.factor(dum$NeighborhoodCollgCr)
+data_working1$Neighborhood_OldTown<-as.factor(dum$NeighborhoodOldTown)
+data_working1$Neighborhood_Edwards<-as.factor(dum$NeighborhoodEdwards)
+data_working1$Neighborhood_Somerst<-as.factor(dum$NeighborhoodSomerst)
+
+# The original variable is removed from the data
+data_working1<-dplyr::select(data_working1, -Neighborhood)
+```
+ 
+
+## 5.0 Building a Regression Model
+
+For the purposes of this analysis, the following multiple regression model have been created. The dependent variable that we are attempting to predict for this prediction case is a *sale price of a property*, and the independent variables are the numeric variables that were determined to be significant by the stepwise regression model described earlier in this analysis. In addition,dummy variables for 5 different neighborhoods were included, as they captured information on the neighborhood that a property was located in.
+
+```{r }
+# A regression model is built
+options(scipen=999)
+options(digits=3)
+
+full.model <- lm(SalePrice ~., data = data_working1)
+s=summary(full.model)
+s
+
+```
+ 
+ 
+### 5.1 Model Assumptions
+
+Once the model had been built, it is important to check that it doesn't violate any of the assumptions of multiple linear regression. In order to check whether a model violates any of the assumption, the following plots were created. Based on these plots, it doesn't appear that any of the assumptions were violated. 
+ 
+```{r}
+plot(full.model)
+```
+
+### 5.2 Model Characteristics
+
+One of the key metrics that one can use to evaluate the performance of the model is the Adjusted R^2 calculation. In our case, as can be seen by the output below, the adjusted R^2 of the model is 0.834. This essentially means that our current model explains about 83.4% percent of variation in the dependent variable.
+
+
+```{r}
+s$adj.r.squared
+```
+
+
+### 6.0 Conclusion
+
+The proposed analytical solution, the multiple regression model, can effectively help real estate developers located in Ames Iowa the following way. First and foremost, the multiple regression model has a high R^2 value, which means that it is a model that explains a high percentage of the variation in the dependent variable. The multiple regression model provides a list of key variables that are significant for predicting the selling price of a particular property. This information can be used by real estate developers to get an idea of which modifications influence the price of a property, and estimate a fair price of a property that is to be developed. With the availability of properties that are currently on sale, it is particularly important for a real estate developer to invest funds in a property that is priced fairly, in order to be able to maximize the return on the investment in the future. 
+
+Moreover, one of the key challenges that real estate developers currently face is the fact that it is often difficult to appropriately price a property after certain modifications have been carried out. The formula in the multiple linear regression can be used to estimate the fair price of a property with modifications to ensure that it is sold in an efficient manner. In addition, the model can estimate by how much, on average, the sale price of a property increases/decreases for a specific attibute. For example, the following can be inquired with the help of the model :"For each addition bathroom, the sale price increases, on average by $x, holding other variables constant", or "Properties in X neighborhood tend to cost, on average, $x more than other neighborhoods, holding other variables constant". While this information cannot be used to calculate with certainity the value of any particular modification, it can still help a real estate develop get an understanding of the average price increase/decrease that may be expected with the additional modification, holding other attibutes of a property constant. 
+
+Therefore, to summarize, the analytical solution proposed above can help a real estate developer from Ames Iowa make better informed decisions related to the purchase of a property before any modifications had been carried out, and the sale of a property after the modifications. In addition, a real estate developer can become more informed on the types of modifications that, on average, tend to increase the price of a home, when other home attributes are held constant. 
+
+
+
+ 
+ 
+ 
+ 
